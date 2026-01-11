@@ -6,13 +6,45 @@ import argparse
 import logging
 import os
 import sys
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 from . import analysis as an
 
 
+def _get_int_from_arg_or_env(
+    arg_value: int | None,
+    env_name: str,
+    default: int,
+    *,
+    min_value: int | None = 1,
+) -> int:
+    """Resolve an int value from CLI arg, env var, or default with validation."""
+    if arg_value is not None:
+        value = arg_value
+    else:
+        env_val = os.getenv(env_name)
+        if env_val is not None:
+            try:
+                value = int(env_val)
+            except ValueError as exc:
+                raise RuntimeError(f"{env_name} must be an integer, got {env_val!r}") from exc
+        else:
+            value = default
+
+    if min_value is not None and value < min_value:
+        raise RuntimeError(f"{env_name} must be >= {min_value}, got {value}")
+    return value
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run benchmark vs reality manipulation analysis via CLI.")
+
+    try:
+        pkg_version = version("manipulation-cli")
+    except PackageNotFoundError:
+        pkg_version = "unknown"
+    parser.add_argument("--version", action="version", version=f"%(prog)s {pkg_version}")
     parser.add_argument("--n-conversations", type=int, default=None, help="WildChat conversations to sample (default env N_CONVERSATIONS or 2).")
     parser.add_argument("--n-truthfulqa", type=int, default=None, help="TruthfulQA questions to evaluate (default env N_TRUTHFULQA or 2).")
     parser.add_argument("--min-turns", type=int, default=None, help="Minimum turns per conversation (default env MIN_TURNS or 3).")
@@ -38,10 +70,10 @@ def build_config(args: argparse.Namespace) -> an.Config:
     an.load_env()
 
     cfg = an.Config(
-        n_conversations=args.n_conversations or int(os.getenv("N_CONVERSATIONS", 2)),
-        n_truthfulqa=args.n_truthfulqa or int(os.getenv("N_TRUTHFULQA", 2)),
-        min_turns=args.min_turns or int(os.getenv("MIN_TURNS", 3)),
-        max_workers=args.max_workers or int(os.getenv("MAX_WORKERS", 4)),
+        n_conversations=_get_int_from_arg_or_env(args.n_conversations, "N_CONVERSATIONS", 2),
+        n_truthfulqa=_get_int_from_arg_or_env(args.n_truthfulqa, "N_TRUTHFULQA", 2),
+        min_turns=_get_int_from_arg_or_env(args.min_turns, "MIN_TURNS", 3),
+        max_workers=_get_int_from_arg_or_env(args.max_workers, "MAX_WORKERS", 4),
         english_only=not args.allow_non_english,
         baseten_api_key=args.baseten_api_key or os.getenv("BASETEN_API_KEY", ""),
         replicate_api_token=args.replicate_api_token or os.getenv("REPLICATE_API_TOKEN", ""),
@@ -66,13 +98,16 @@ def main() -> None:
     try:
         cfg = build_config(args)
     except Exception as exc:  # pragma: no cover
-        logging.error("Configuration error: %s", exc)
+        logging.error("Configuration error: %s", exc, exc_info=True)
         sys.exit(1)
 
     logging.info("Starting analysis with %s conversations and %s TruthfulQA questions", cfg.n_conversations, cfg.n_truthfulqa)
 
     if args.test_endpoints:
-        an.smoke_test_endpoints(cfg)
+        try:
+            an.smoke_test_endpoints(cfg)
+        except Exception as exc:
+            logging.warning("Endpoint smoke test failed: %s", exc, exc_info=True)
 
     benchmark_scores: dict = {}
     reality_df = None
@@ -121,5 +156,5 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as exc:  # pragma: no cover
-        logging.error("Fatal error: %s", exc)
+        logging.error("Fatal error: %s", exc, exc_info=True)
         sys.exit(1)

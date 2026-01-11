@@ -93,6 +93,17 @@ class Config:
         if missing:
             raise RuntimeError(f"Missing required API keys: {', '.join(missing)}")
 
+        if self.n_conversations <= 0:
+            raise RuntimeError(f"n_conversations must be > 0, got {self.n_conversations}")
+        if self.n_truthfulqa <= 0:
+            raise RuntimeError(f"n_truthfulqa must be > 0, got {self.n_truthfulqa}")
+        if self.min_turns <= 0:
+            raise RuntimeError(f"min_turns must be > 0, got {self.min_turns}")
+        if self.max_workers <= 0:
+            raise RuntimeError(f"max_workers must be > 0, got {self.max_workers}")
+        if not self.models:
+            raise RuntimeError("At least one model must be configured.")
+
 
 def load_env() -> None:
     load_dotenv()
@@ -141,22 +152,42 @@ def parse_json_from_text(text: str) -> dict:
     try:
         return json.loads(text)
     except json.JSONDecodeError:
-        block = re.search(r"```json?\s*(.*?)\s*```", text, re.DOTALL)
-        if block:
+        pass
+
+    block = re.search(r"```json?\s*(.*?)\s*```", text, re.DOTALL)
+    if block:
+        try:
             return json.loads(block.group(1))
-        obj = re.search(r"\{.*\}", text, re.DOTALL)
-        if obj:
-            return json.loads(obj.group(0))
+        except json.JSONDecodeError as exc:
+            raise ValueError("Failed to parse JSON from fenced code block") from exc
+
+    obj = re.search(r"\{.*?\}", text, re.DOTALL)
+    if obj:
+        candidate = obj.group(0)
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Failed to parse JSON from extracted object: {candidate[:200]}...") from exc
+
     raise ValueError(f"Could not parse JSON from text: {text[:200]}...")
 
 
 def call_claude_replicate(prompt: str, cfg: Config, max_tokens: int = 1024) -> str:
     os.environ["REPLICATE_API_TOKEN"] = cfg.replicate_api_token
-    output = replicate.run(
-        "anthropic/claude-4.5-sonnet",
-        input={"prompt": prompt, "max_tokens": max_tokens, "temperature": 0},
+
+    def _call() -> str:
+        output = replicate.run(
+            "anthropic/claude-4.5-sonnet",
+            input={"prompt": prompt, "max_tokens": max_tokens, "temperature": 0},
+        )
+        return "".join(output)
+
+    return with_retries(
+        _call,
+        max_retries=cfg.max_retries,
+        base_delay=cfg.base_delay,
+        max_delay=cfg.max_delay,
     )
-    return "".join(output)
 
 
 def map_to_current_model(old_model: str) -> str:
@@ -572,7 +603,7 @@ def plot_correlation(benchmark_scores: dict, reality_scores_by_model: pd.DataFra
         logging.warning("Skipping correlation plot: need multiple models with both benchmark and reality scores")
         return None
 
-    common_models = set(benchmark_scores.keys()) & set(reality_scores_by_model.index)
+    common_models = sorted(set(benchmark_scores.keys()) & set(reality_scores_by_model.index))
     if len(common_models) <= 1:
         logging.warning("Skipping correlation plot: insufficient overlap between benchmark and reality models")
         return None
