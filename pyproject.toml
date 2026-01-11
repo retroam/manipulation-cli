@@ -1,0 +1,28 @@
+[project]
+name = "manipulation-cli"
+version = "0.1.0"
+description = "CLI wrapper for the Benchmark vs Reality manipulation analysis (WildChat replay + TruthfulQA)."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "APART Team" }]
+license = { text = "MIT" }
+
+dependencies = [
+  "datasets>=2.14",
+  "pandas>=2.1",
+  "numpy>=1.26",
+  "matplotlib>=3.8",
+  "seaborn>=0.13",
+  "scipy>=1.11",
+  "python-dotenv>=1.0",
+  "tqdm>=4.66",
+  "openai>=1.6",
+  "replicate>=0.25",
+]
+
+[project.scripts]
+manipulation-cli = "manipulation_cli.cli:main"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
